@@ -6,6 +6,7 @@ import (
 
 // +genclient
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+// +kubebuilder:resource:shortName=durl;durls,scope=Namespaced
 // +kubebuilder:printcolumn:name="URL",type="string",JSONPath=`.url`
 
 type DownloadURL struct {

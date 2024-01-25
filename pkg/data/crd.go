@@ -38,6 +38,7 @@ func createCRDs(ctx context.Context, restConfig *rest.Config) error {
 			crd.NonNamespacedFromGV(loggingv1.GroupVersion, "Logging", loggingv1.Logging{}),
 		).
 		BatchCreateCRDsIfNotExisted(
+			crd.FromGV(harvesterv1.SchemeGroupVersion, "DownloadURL", harvesterv1.DownloadURL{}),
 			crd.FromGV(harvesterv1.SchemeGroupVersion, "KeyPair", harvesterv1.KeyPair{}),
 			crd.FromGV(harvesterv1.SchemeGroupVersion, "Upgrade", harvesterv1.Upgrade{}),
 			crd.FromGV(harvesterv1.SchemeGroupVersion, "UpgradeLog", harvesterv1.UpgradeLog{}),
