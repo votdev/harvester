@@ -119,7 +119,7 @@ func (c *Calculator) getNamespaceResourceQuota(vm *kubevirtv1.VirtualMachine) (*
 		return nil, err
 	}
 
-	if resourceQuota.Limit.LimitsCPU == "" && resourceQuota.Limit.LimitsMemory == "" {
+	if resourceQuota.Limit.LimitsCPU == "" && resourceQuota.Limit.LimitsMemory == "" && resourceQuota.Limit.RequestsStorage == "" {
 		return nil, nil
 	}
 
@@ -132,16 +132,18 @@ func (c *Calculator) containsEnoughResourceQuotaToStartVM(
 	namespaceResourceQuota *v3.NamespaceResourceQuota,
 	rq *corev1.ResourceQuota) error {
 	// get running migrations' used resource
-	vmimsCPU, vmimsMem, err := c.getRunningVMIMResources(rq)
+	vmimsCPU, vmimsMem, vmimsStorage, err := c.getRunningVMIMResources(rq)
 	if err != nil {
 		return err
 	}
 
 	usedCPU := rq.Status.Used.Name(corev1.ResourceLimitsCPU, resource.DecimalSI)
 	usedMem := rq.Status.Used.Name(corev1.ResourceLimitsMemory, resource.BinarySI)
+	usedStorage := rq.Status.Used.Name(corev1.ResourceRequestsStorage, resource.BinarySI)
 	// calculate vm actual used resource
 	usedCPU.Sub(vmimsCPU)
 	usedMem.Sub(vmimsMem)
+	usedStorage.Sub(vmimsStorage)
 
 	memOverhead := c.calculateVMActualOverhead(vm)
 	vmCPU := vm.Spec.Template.Spec.Domain.Resources.Limits[corev1.ResourceCPU]
@@ -154,6 +156,7 @@ func (c *Calculator) containsEnoughResourceQuotaToStartVM(
 	}
 	actualCPU := actualRq.Name(corev1.ResourceLimitsCPU, resource.DecimalSI)
 	actualMem := actualRq.Name(corev1.ResourceLimitsMemory, resource.BinarySI)
+	actualStorage := actualRq.Name(corev1.ResourceRequestsStorage, resource.BinarySI)
 
 	// check if vms actual used resource is less than namespace resource quota limits
 	// if not, return insufficient resource error
@@ -166,6 +169,12 @@ func (c *Calculator) containsEnoughResourceQuotaToStartVM(
 	if !actualMem.IsZero() {
 		actualMem.Sub(*usedMem)
 		if actualMem.Cmp(vmMem) == -1 {
+			return memInsufficientResourceError()
+		}
+	}
+	if !actualStorage.IsZero() {
+		actualStorage.Sub(*usedStorage)
+		if actualStorage.Sign() == -1 {
 			return memInsufficientResourceError()
 		}
 	}
@@ -192,15 +201,16 @@ func (c *Calculator) calculateVMActualOverhead(vm *kubevirtv1.VirtualMachine) *r
 	return &memoryOverhead
 }
 
-func (c *Calculator) getRunningVMIMResources(rq *corev1.ResourceQuota) (cpu, mem resource.Quantity, err error) {
+func (c *Calculator) getRunningVMIMResources(rq *corev1.ResourceQuota) (cpu, mem resource.Quantity, storage resource.Quantity, err error) {
 	vms, err := GetResourceListFromMigratingVMs(rq)
 	if err != nil {
-		return cpu, mem, err
+		return cpu, mem, storage, err
 	}
 
 	for _, rl := range vms {
 		cpu.Add(*rl.Name(corev1.ResourceLimitsCPU, resource.DecimalSI))
 		mem.Add(*rl.Name(corev1.ResourceLimitsMemory, resource.BinarySI))
+		storage.Add(*rl.Name(corev1.ResourceRequestsStorage, resource.BinarySI))
 	}
 
 	return
