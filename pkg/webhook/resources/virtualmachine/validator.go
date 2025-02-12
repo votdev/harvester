@@ -11,7 +11,8 @@ import (
 	admissionregv1 "k8s.io/api/admissionregistration/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
-	runtime "k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime"
 	kubevirtv1 "kubevirt.io/api/core/v1"
 
 	ctlharvestercorev1 "github.com/harvester/harvester/pkg/generated/controllers/core/v1"
@@ -39,6 +40,7 @@ func NewValidator(
 	vmCache ctlkubevirtv1.VirtualMachineCache,
 	vmiCache ctlkubevirtv1.VirtualMachineInstanceCache,
 	nadCache ctlcniv1.NetworkAttachmentDefinitionCache,
+	nodeCache v1.NodeCache,
 ) types.Validator {
 	return &vmValidator{
 		pvcCache:      pvcCache,
@@ -46,6 +48,7 @@ func NewValidator(
 		vmCache:       vmCache,
 		vmiCache:      vmiCache,
 		nadCache:      nadCache,
+		nodeCache:     nodeCache,
 
 		rqCalculator: resourcequota.NewCalculator(nsCache, podCache, rqCache, vmimCache),
 	}
@@ -58,6 +61,7 @@ type vmValidator struct {
 	vmCache       ctlkubevirtv1.VirtualMachineCache
 	vmiCache      ctlkubevirtv1.VirtualMachineInstanceCache
 	nadCache      ctlcniv1.NetworkAttachmentDefinitionCache
+	nodeCache     v1.NodeCache
 
 	rqCalculator *resourcequota.Calculator
 }
@@ -227,6 +231,10 @@ func (v *vmValidator) Create(_ *types.Request, newObj runtime.Object) error {
 		return err
 	}
 
+	if err := v.checkDedicatedCPUPlacement(vm, true); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -266,6 +274,10 @@ func (v *vmValidator) Update(_ *types.Request, oldObj runtime.Object, newObj run
 	}
 
 	if err := v.checkForDuplicateMacAddrs(newVM); err != nil {
+		return err
+	}
+
+	if err := v.checkDedicatedCPUPlacement(newVM, false); err != nil {
 		return err
 	}
 
@@ -451,4 +463,23 @@ func (v *vmValidator) checkReservedMemoryAnnotation(vm *kubevirtv1.VirtualMachin
 
 func (v *vmValidator) checkStorageResourceQuota(vm *kubevirtv1.VirtualMachine, oldVM *kubevirtv1.VirtualMachine) error {
 	return v.rqCalculator.CheckStorageResourceQuota(vm, oldVM)
+}
+
+func (v *vmValidator) checkDedicatedCPUPlacement(vm *kubevirtv1.VirtualMachine, isCreated bool) error {
+	if !isDedicatedCPU(vm) {
+		return nil
+	}
+
+	selector := labels.Set{kubevirtv1.CPUManager: "true"}.AsSelector()
+	nodeList, err := v.nodeCache.List(selector)
+	if err != nil {
+		return fmt.Errorf("failed to list nodes with labels %s: %v", selector.String(), err)
+	}
+
+	if len(nodeList) == 0 {
+		return werror.NewInvalidError("must enable CPU Manager for at least one node in host page to enable CPU Pinning for VM",
+			"spec.template.spec.domain.cpu.dedicatedCpuPlacement")
+	}
+
+	return nil
 }
